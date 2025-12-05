@@ -16,6 +16,8 @@ import time
 
 from db import EmryDB
 from markdown_generator import MarkdownGenerator
+from cloud_sync import CloudSyncManager
+from file_manager import FileSizeManager
 
 # Configuration
 PORT = int(os.environ.get('EMRY_PORT', 8766))
@@ -42,6 +44,13 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 db = EmryDB(str(DB_PATH))
 md_gen = MarkdownGenerator(str(MD_DIR))
+
+# Cloud sync (automatic and transparent)
+cloud_sync = CloudSyncManager(str(MD_DIR))
+cloud_observer = None  # Will be started in main
+
+# File size manager
+file_mgr = FileSizeManager(str(MD_DIR))
 
 # Privacy settings
 PRIVACY_OPEN = "{{"
@@ -141,6 +150,10 @@ def capture():
 
         # Also update index
         md_gen.generate_index(db)
+
+        # Auto-sync to Google Drive (transparent - user never thinks about it)
+        if md_file and cloud_sync.sync_dir:
+            cloud_sync.sync_file(Path(md_file))
 
         # Notify connected clients via WebSocket
         socketio.emit('new_message', {
@@ -306,6 +319,15 @@ signal.signal(signal.SIGINT, cleanup)
 signal.signal(signal.SIGTERM, cleanup)
 
 if __name__ == '__main__':
+    # Start automatic cloud sync (transparent to user)
+    global cloud_observer
+    cloud_observer = cloud_sync.start_auto_sync()
+
+    # Initial sync of existing files
+    if cloud_sync.sync_dir:
+        print("[CloudSync] Performing initial sync...")
+        cloud_sync.sync_all()
+
     # Start background worker
     worker_thread = threading.Thread(target=auto_regenerate_worker, daemon=True)
     worker_thread.start()
